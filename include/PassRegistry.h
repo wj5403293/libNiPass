@@ -24,6 +24,12 @@ namespace ni_pass {
 class PassRegistry {
 public:
   /**
+   * 注册所有 PassBuilder 回调，并输出插件生效标记。
+   * 供 `-fpass-plugin` 与 `-fplugin` 桥接路径共用。
+   */
+  static void registerPassBuilderCallbacks(llvm::PassBuilder &PB);
+
+  /**
    * 注册所有Pass到PassBuilder
    * @param PB PassBuilder实例
    */

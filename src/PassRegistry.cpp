@@ -21,6 +21,11 @@ static cl::opt<bool> s_obf_eibr("eibr", cl::init(false), cl::desc("Enhanced Indi
 
 namespace ni_pass {
 
+void PassRegistry::registerPassBuilderCallbacks(llvm::PassBuilder &PB) {
+  outs() << "Made By Ni-QiuQiu\n";
+  registerAllPasses(PB);
+}
+
 void PassRegistry::registerModulePasses(llvm::PassBuilder &PB) {
   PB.registerOptimizerLastEPCallback(
     #if LLVM_VERSION_MAJOR <= 12
@@ -115,11 +120,9 @@ void PassRegistry::registerAllPasses(llvm::PassBuilder &PB) {
 // 统一的Pass注册函数
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  outs() << "Made By Ni-QiuQiu\n";
-
   return {LLVM_PLUGIN_API_VERSION, "NiPass", LLVM_VERSION_STRING,
           [](llvm::PassBuilder &PB) {
-            ni_pass::PassRegistry::registerAllPasses(PB);
+            ni_pass::PassRegistry::registerPassBuilderCallbacks(PB);
           }};
 }
 

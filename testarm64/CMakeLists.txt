@@ -46,27 +46,17 @@ set(NIPASS_LIB "${CMAKE_SOURCE_DIR}/../lib/libNiPass-19.0.0.so"
 
 # 是否启用混淆（默认开启）
 option(ENABLE_OBFUSCATION "Enable NiPass obfuscation" ON)
+set(NIPASS_PASSES "-enfla" CACHE STRING "NiPass -mllvm passes for fplugin mode")
 
-# 插件加载模式: "fpass-plugin" (方式二，注解驱动) 或 "fplugin" (方式一，全局开关)
-set(PLUGIN_MODE "fpass-plugin" CACHE STRING "Plugin loading mode: fpass-plugin or fplugin")
-
-# 方式一全局开关列表（仅 fplugin 模式生效）
-set(NIPASS_PASSES "-enstrenc;-enfla" CACHE STRING "NiPass -mllvm passes for fplugin mode")
 
 if(ENABLE_OBFUSCATION AND EXISTS "${NIPASS_LIB}")
     message(STATUS "NiPass plugin: ${NIPASS_LIB}")
-    message(STATUS "Plugin mode: ${PLUGIN_MODE}")
-    if(PLUGIN_MODE STREQUAL "fplugin")
-        # 方式一：-fplugin + -mllvm 全局开关
-        add_compile_options(-fplugin=${NIPASS_LIB})
-        foreach(pass ${NIPASS_PASSES})
-            add_compile_options("SHELL:-mllvm ${pass}")
-        endforeach()
-        message(STATUS "Global passes: ${NIPASS_PASSES}")
-    else()
-        # 方式二：-fpass-plugin 注解驱动
-        add_compile_options(-fpass-plugin=${NIPASS_LIB})
-    endif()
+    # 通过 -fplugin 加载插件，并用 -mllvm 传递全局开关
+    add_compile_options(-fplugin=${NIPASS_LIB})
+    foreach(pass ${NIPASS_PASSES})
+        add_compile_options("SHELL:-mllvm ${pass}")
+    endforeach()
+    message(STATUS "Global passes: ${NIPASS_PASSES}")
 elseif(ENABLE_OBFUSCATION)
     message(WARNING "NiPass plugin not found: ${NIPASS_LIB}, building without obfuscation")
 endif()
@@ -74,22 +64,26 @@ endif()
 # ============================================================================
 # 测试目标
 # ============================================================================
+function(add_nipass_test target source)
+    if(ENABLE_OBFUSCATION AND EXISTS "${NIPASS_LIB}")
+        # 插件 .so 变更后，强制相关源码重新编译，避免继续复用旧混淆产物。
+        set_source_files_properties(${source} PROPERTIES OBJECT_DEPENDS "${NIPASS_LIB}")
+    endif()
+    add_executable(${target} ${source})
+    target_compile_options(${target} PRIVATE -O1)
+endfunction()
+
 # 基础测试 - 覆盖各类混淆场景
-add_executable(test_nipass test.c)
-target_compile_options(test_nipass PRIVATE -O1)
+add_nipass_test(test_nipass test.c)
+
+# 注解驱动测试 - 覆盖函数级注解与子选项
+add_nipass_test(test_annotate test_annotate.c)
 
 # 生产级测试 - 模拟真实 native 库场景
-add_executable(test_production test_production.c)
-target_compile_options(test_production PRIVATE -O1)
+add_nipass_test(test_production test_production.c)
 
 # STL 测试 - 容器/算法/智能指针/variant
-add_executable(test_stl test_stl.cpp)
-target_compile_options(test_stl PRIVATE -O1)
+add_nipass_test(test_stl test_stl.cpp)
 
 # 模板元编程测试 - CRTP/SFINAE/表达式模板/策略模式
-add_executable(test_template test_template.cpp)
-target_compile_options(test_template PRIVATE -O1)
-
-# 注解子选项测试 - 方式二注解驱动的子配置选项
-add_executable(test_annotate test_annotate.c)
-target_compile_options(test_annotate PRIVATE -O1)
+add_nipass_test(test_template test_template.cpp)

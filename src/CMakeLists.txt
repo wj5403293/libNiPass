@@ -13,6 +13,7 @@ set(EncPass
 
 set(Utils
     CryptoUtils.cpp
+    FrontendPluginBridge.cpp
     PassRegistry.cpp
     Utils.cpp
     Fun/SubstituteImpl.cpp

@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define _noinline __attribute__((noinline))
+
 // 测试字符串加密
 const char *secret_key = "NiPass_Secret_Key_2024";
 const char *api_url = "https://api.example.com/v1/auth";
@@ -11,16 +13,16 @@ static int magic_number = 0xDEADBEEF;
 static int lookup_table[] = {10, 20, 30, 40, 50, 60, 70, 80};
 
 // 简单函数 - 测试基本混淆
-int add(int a, int b) {
+_noinline int add(int a, int b) {
     return a + b;
 }
 
-int sub(int a, int b) {
+_noinline int sub(int a, int b) {
     return a - b;
 }
 
 // 带分支的函数 - 测试控制流平坦化
-int classify(int x) {
+_noinline int classify(int x) {
     if (x > 100) {
         return 3;
     } else if (x > 50) {
@@ -33,7 +35,7 @@ int classify(int x) {
 }
 
 // switch 语句 - 测试平坦化
-const char *day_name(int day) {
+_noinline const char *day_name(int day) {
     switch (day) {
         case 1: return "Monday";
         case 2: return "Tuesday";
@@ -47,7 +49,7 @@ const char *day_name(int day) {
 }
 
 // 循环 - 测试 MBA / 替换
-int sum_array(int *arr, int n) {
+_noinline int sum_array(int *arr, int n) {
     int total = 0;
     for (int i = 0; i < n; i++) {
         total += arr[i];
@@ -58,12 +60,12 @@ int sum_array(int *arr, int n) {
 // 间接调用测试
 typedef int (*op_func)(int, int);
 
-int dispatch(op_func fn, int a, int b) {
+_noinline int dispatch(op_func fn, int a, int b) {
     return fn(a, b);
 }
 
 // 复杂控制流 - 测试 BCF + 平坦化组合
-int complex_logic(int a, int b, int c) {
+_noinline int complex_logic(int a, int b, int c) {
     int result = 0;
     if (a > b) {
         if (b > c) {
@@ -85,7 +87,7 @@ int complex_logic(int a, int b, int c) {
 }
 
 // 字符串操作 - 测试字符串加密效果
-int check_password(const char *input) {
+_noinline int check_password(const char *input) {
     if (strcmp(input, "p@ssw0rd_123!") == 0) {
         printf("Access granted: %s\n", secret_key);
         return 1;
@@ -94,7 +96,7 @@ int check_password(const char *input) {
     return 0;
 }
 
-int main(int argc, char *argv[]) {
+_noinline int main(int argc, char *argv[]) {
     printf("=== NiPass ARM64 Test ===\n");
     printf("API: %s\n", api_url);
     printf("Magic: 0x%X\n", magic_number);

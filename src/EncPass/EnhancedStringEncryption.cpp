@@ -40,6 +40,14 @@ static cl::opt<bool>
 
 namespace ni_pass {
 
+static std::string createRandomGlobalName(Module &M, StringRef Prefix) {
+  std::string Name;
+  do {
+    Name = Prefix.str() + std::to_string(cryptoutils->get_uint64_t());
+  } while (M.getNamedValue(Name) != nullptr);
+  return Name;
+}
+
 //===----------------------------------------------------------------------===//
 // handleableGV / processConstantAggregate / HandleUser — 与原版相同
 //===----------------------------------------------------------------------===//
@@ -306,25 +314,26 @@ void EnhancedStringEncryptionPass::HandleFunction(Function *Func) {
       llvm_unreachable("Unsupported CDS Type");
     }
 
-    // 改动一：GV名随机化
+    std::string EncryptedName = createRandomGlobalName(*M, ".gv_");
     GlobalVariable *EncryptedRawGV = new GlobalVariable(
         *M, EncryptedConst->getType(), false, GV->getLinkage(),
-        EncryptedConst, "", nullptr, GV->getThreadLocalMode(),
+        EncryptedConst, EncryptedName, nullptr, GV->getThreadLocalMode(),
         GV->getType()->getAddressSpace());
     genedgv.emplace_back(EncryptedRawGV);
 
     GlobalVariable *DecryptSpaceGV;
+    std::string DecryptName = createRandomGlobalName(*M, ".gv_");
     if (rust_string) {
       ConstantAggregate *CA = cast<ConstantAggregate>(GV->getInitializer());
       CA->setOperand(0, DummyConst);
       DecryptSpaceGV = new GlobalVariable(
           *M, GV->getValueType(), false, GV->getLinkage(), CA,
-          "", nullptr, GV->getThreadLocalMode(),
+          DecryptName, nullptr, GV->getThreadLocalMode(),
           GV->getType()->getAddressSpace());
     } else {
       DecryptSpaceGV = new GlobalVariable(
           *M, DummyConst->getType(), false, GV->getLinkage(), DummyConst,
-          "", nullptr, GV->getThreadLocalMode(),
+          DecryptName, nullptr, GV->getThreadLocalMode(),
           GV->getType()->getAddressSpace());
     }
     genedgv.emplace_back(DecryptSpaceGV);
@@ -824,12 +833,12 @@ EnhancedStringEncryptionPass::run(Module &M, ModuleAnalysisManager &MAM) {
         return PreservedAnalyses::all();
       }
 
-      // 改动一：GV名随机化
       Constant *S =
           ConstantInt::getNullValue(Type::getInt32Ty(M.getContext()));
+      std::string StatusName = createRandomGlobalName(M, ".gv_");
       GlobalVariable *GV = new GlobalVariable(
           M, S->getType(), false, GlobalValue::LinkageTypes::PrivateLinkage,
-          S, "");
+          S, StatusName);
       encstatus[&F] = GV;
 
       HandleFunction(&F);

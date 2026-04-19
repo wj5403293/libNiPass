@@ -174,21 +174,42 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
     irb.CreateMemSet(visitedArray, irb.getInt8(0), origBB.size(), MaybeAlign(0));
     irb.CreateMemSet(keyArray, irb.getInt8(0), origBB.size() * 4, MaybeAlign(0));
 
-    int idx = 0;
     std::vector<unsigned int> key_list;
     DominatorTree tree(*f);
     std::map<BasicBlock *, unsigned int> key_map;
     std::map<BasicBlock *, unsigned int> index_map;
 
     // 初始化密钥映射
-    for (auto b = origBB.begin(); b != origBB.end(); b++) {
+    int idx = 0;
+    for (auto b = origBB.begin(); b != origBB.end(); b++, idx++) {
         unsigned int num = getUniqueNumber(&key_list);
         key_list.push_back(num);
         key_map[*b] = 0;
+        index_map[*b] = idx;
     }
 
-    // 构建支配关系和密钥（编译时用 nonlinearHash 累积）
+    // 编译时的 key_map 必须按支配链顺序累积。
+    // runtime 的 keyArray 更新发生在“首次执行某个 dominator 时”，
+    // 对任意 block 来说，其 dominator 的生效顺序是 entry -> ... -> idom，
+    // 不是 origBB 的物理布局顺序。nonlinearHash 非交换，顺序错了就会把
+    // switchVar 还原成一个不存在的 case，最终卡在 DefaultCase 自旋。
+    for (BasicBlock *block : origBB) {
+        auto *node = tree.getNode(block);
+        if (node == nullptr)
+            continue;
+
+        SmallVector<BasicBlock *, 8> domChain;
+        for (auto *idom = node->getIDom(); idom != nullptr; idom = idom->getIDom())
+            domChain.push_back(idom->getBlock());
+
+        for (auto it = domChain.rbegin(); it != domChain.rend(); ++it) {
+            BasicBlock *dom = *it;
+            key_map[block] = nonlinearHash(key_map[block], key_list[index_map[dom]]);
+        }
+    }
+
     // 运行时：在每个块末尾内联密钥更新（无条件写入，用 select 避免 split）
+    idx = 0;
     for (auto b = origBB.begin(); b != origBB.end(); b++, idx++) {
         BasicBlock *block = *b;
         std::vector<unsigned int> domIndices;
@@ -198,7 +219,6 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
             BasicBlock *block0 = *bb;
             if (block0 != block && tree.dominates(block, block0)) {
                 domIndices.push_back(i);
-                key_map[block0] = nonlinearHash(key_map[block0], key_list[idx]);
             }
         }
 
@@ -224,7 +244,6 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
         }
 
         irb.CreateStore(irb.getInt8(1), ptr);
-        index_map[block] = idx;
     }
 
     // ============================================================
@@ -256,6 +275,7 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
 
     std::vector<unsigned int> rand_list;
     unsigned int startNum = 0;
+    std::map<BasicBlock *, ConstantInt *> case_map;
 
     // 将基本块放入 switch 结构
     for (auto b = origBB.begin(); b != origBB.end(); b++) {
@@ -274,6 +294,7 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
         ConstantInt *numCase =
             cast<ConstantInt>(ConstantInt::get(sw->getCondition()->getType(), num));
         sw->addCase(numCase, block);
+        case_map[block] = numCase;
     }
 
     // 设置入口值
@@ -308,6 +329,20 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
         sw->addCase(bogusCase, bogusBB);
     }
 
+    auto getOrCreateCaseFor = [&](BasicBlock *dest) -> ConstantInt * {
+        auto it = case_map.find(dest);
+        if (it != case_map.end())
+            return it->second;
+
+        unsigned int num = getUniqueNumber(&rand_list);
+        rand_list.push_back(num);
+        ConstantInt *newCase =
+            cast<ConstantInt>(ConstantInt::get(sw->getCondition()->getType(), num));
+        sw->addCase(newCase, dest);
+        case_map[dest] = newCase;
+        return newCase;
+    };
+
     // ============================================================
     // 处理后继：用 emitObfuscatedXor 替代直接 XOR
     // ============================================================
@@ -323,14 +358,7 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
 
         if (block->getTerminator()->getNumSuccessors() == 1) {
             BasicBlock *succ = block->getTerminator()->getSuccessor(0);
-            ConstantInt *caseNum = sw->findCaseDest(succ);
-
-            if (caseNum == nullptr) {
-                unsigned int num = getUniqueNumber(&rand_list);
-                rand_list.push_back(num);
-                caseNum = cast<ConstantInt>(
-                    ConstantInt::get(sw->getCondition()->getType(), num));
-            }
+            ConstantInt *caseNum = getOrCreateCaseFor(succ);
 
             unsigned int fixNum =
                 caseNum->getValue().getZExtValue() ^ key_map[block];
@@ -350,21 +378,8 @@ void FlatteningEnhanced::DoFlatteningEnhanced(Function *f) {
         } else if (block->getTerminator()->getNumSuccessors() == 2) {
             BasicBlock *succTrue = block->getTerminator()->getSuccessor(0);
             BasicBlock *succFalse = block->getTerminator()->getSuccessor(1);
-            ConstantInt *numTrue = sw->findCaseDest(succTrue);
-            ConstantInt *numFalse = sw->findCaseDest(succFalse);
-
-            if (numTrue == nullptr) {
-                unsigned int num = getUniqueNumber(&rand_list);
-                rand_list.push_back(num);
-                numTrue = cast<ConstantInt>(
-                    ConstantInt::get(sw->getCondition()->getType(), num));
-            }
-            if (numFalse == nullptr) {
-                unsigned int num = getUniqueNumber(&rand_list);
-                rand_list.push_back(num);
-                numFalse = cast<ConstantInt>(
-                    ConstantInt::get(sw->getCondition()->getType(), num));
-            }
+            ConstantInt *numTrue = getOrCreateCaseFor(succTrue);
+            ConstantInt *numFalse = getOrCreateCaseFor(succFalse);
 
             unsigned int fixNumTrue =
                 numTrue->getValue().getZExtValue() ^ key_map[block];

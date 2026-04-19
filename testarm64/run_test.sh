@@ -7,6 +7,7 @@
 #   ./run_test.sh plain          # 测试未混淆版本
 #   ./run_test.sh both           # 两个版本都测试并对比
 #   ./run_test.sh -s <serial>    # 指定设备序列号
+#   ./run_test.sh -t 5           # 指定单个程序超时时间（秒）
 
 set -e
 
@@ -15,7 +16,9 @@ BIN_DIR="${SCRIPT_DIR}/bin"
 DEVICE_DIR="/data/local/tmp/nipass_test"
 
 # 设备上执行超时时间（秒）
-TIMEOUT=10
+TIMEOUT="${TIMEOUT_SECONDS:-10}"
+
+TARGETS="test_nipass test_annotate test_production test_stl test_template"
 
 # 解析参数
 ADB_SERIAL=""
@@ -26,6 +29,10 @@ while [[ $# -gt 0 ]]; do
             ADB_SERIAL="$2"
             shift 2
             ;;
+        -t|--timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
         *)
             MODE="$1"
             shift
@@ -33,6 +40,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 MODE="${MODE:-obf}"
+
+if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || [ "$TIMEOUT" -le 0 ]; then
+    echo "[ERROR] Timeout must be a positive integer, got: ${TIMEOUT}"
+    exit 1
+fi
 
 # adb 命令封装
 ADB="adb"
@@ -123,6 +135,23 @@ print_summary() {
     fi
 }
 
+run_targets() {
+    local suffix="$1"
+    local label_suffix="$2"
+
+    for t in $TARGETS; do
+        local local_bin="${BIN_DIR}/${t}${suffix}"
+        local remote_name="${t}${suffix}"
+        local label="${t} (${label_suffix})"
+
+        if run_on_device "$local_bin" "$remote_name" "$label"; then
+            PASSED=$((PASSED + 1))
+        else
+            FAILED=$((FAILED + 1))
+        fi
+    done
+}
+
 echo "========================================"
 echo "  NiPass ARM64 Device Test"
 echo "========================================"
@@ -135,34 +164,16 @@ FAILED=0
 
 case "$MODE" in
     obf)
-        TOTAL=2
-        if run_on_device "${BIN_DIR}/test_nipass" "test_nipass" "test_nipass (obfuscated)"; then
-            PASSED=$((PASSED + 1))
-        else
-            FAILED=$((FAILED + 1))
-        fi
-        if run_on_device "${BIN_DIR}/test_production" "test_production" "test_production (obfuscated)"; then
-            PASSED=$((PASSED + 1))
-        else
-            FAILED=$((FAILED + 1))
-        fi
+        TOTAL=5
+        run_targets "" "obfuscated"
         ;;
     plain)
-        TOTAL=2
-        if run_on_device "${BIN_DIR}/test_nipass" "test_nipass" "test_nipass (plain)"; then
-            PASSED=$((PASSED + 1))
-        else
-            FAILED=$((FAILED + 1))
-        fi
-        if run_on_device "${BIN_DIR}/test_production" "test_production" "test_production (plain)"; then
-            PASSED=$((PASSED + 1))
-        else
-            FAILED=$((FAILED + 1))
-        fi
+        TOTAL=5
+        run_targets "" "plain"
         ;;
     both)
-        TOTAL=4
-        for t in test_nipass test_production; do
+        TOTAL=10
+        for t in $TARGETS; do
             if [ ! -f "${BIN_DIR}/${t}_plain" ] || [ ! -f "${BIN_DIR}/${t}_obf" ]; then
                 echo ""
                 echo "[ERROR] Missing ${t}_plain or ${t}_obf. Run './build.sh both' first."
@@ -170,21 +181,11 @@ case "$MODE" in
             fi
         done
 
-        for t in test_nipass test_production; do
-            if run_on_device "${BIN_DIR}/${t}_plain" "${t}_plain" "${t} (plain)"; then
-                PASSED=$((PASSED + 1))
-            else
-                FAILED=$((FAILED + 1))
-            fi
-            if run_on_device "${BIN_DIR}/${t}_obf" "${t}_obf" "${t} (obfuscated)"; then
-                PASSED=$((PASSED + 1))
-            else
-                FAILED=$((FAILED + 1))
-            fi
-        done
+        run_targets "_plain" "plain"
+        run_targets "_obf" "obfuscated"
         ;;
     *)
-        echo "Usage: $0 [-s serial] [obf|plain|both]"
+        echo "Usage: $0 [-s serial] [-t seconds] [obf|plain|both]"
         exit 1
         ;;
 esac

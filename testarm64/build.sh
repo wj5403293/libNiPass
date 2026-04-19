@@ -20,7 +20,7 @@ BUILD_PLAIN="${SCRIPT_DIR}/build_plain"
 MODE="${1:-obf}"
 
 # 所有测试二进制名
-TARGETS="test_nipass test_production test_stl test_template"
+TARGETS="test_nipass test_annotate test_production test_stl test_template"
 
 do_build() {
     local build_dir="$1"
